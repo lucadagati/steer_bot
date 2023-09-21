@@ -26,10 +26,10 @@ def read_file_sdf(filename):
     with open(filename, 'r') as file:
         return file.read()
 
-MODEL_CONTENT_CONE_LEFT = read_file_sdf(filename = 'cone_yellow/model.sdf')
-MODEL_CONTENT_CONE_RIGHT = read_file_sdf(filename = 'cone_blue/model.sdf')
-MODEL_CONTENT_ROAD = read_file_sdf(filename = 'road.sdf')  # Assuming you have an sdf named road_.sdf
-MODEL_CONTENT_TREE = read_file_sdf(filename = 'tree.sdf')
+MODEL_CONTENT_CONE_LEFT = read_file_sdf(filename = './steer_bot/cone_yellow/model.sdf')
+MODEL_CONTENT_CONE_RIGHT = read_file_sdf(filename = './steer_bot/cone_blue/model.sdf')
+MODEL_CONTENT_ROAD = read_file_sdf(filename = './steer_bot/road.sdf')  # Assuming you have an sdf named road_.sdf
+MODEL_CONTENT_TREE = read_file_sdf(filename = './steer_bot/tree.sdf')
 
 def generate_trajectory():
     """Generates the primary trajectory using sin curve."""
