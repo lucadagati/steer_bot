@@ -3,51 +3,63 @@
 import rospy
 import math
 import numpy as np
+import random
 from gazebo_msgs.srv import SpawnModel
 from geometry_msgs.msg import Pose
 from scipy import interpolate
 
 # Constants
-LIST_TREE = [(2,5), (7,7), (10,9)]
 SKIP_LEFT_POINTS = [24, 25]
 SKIP_RIGHT_POINTS = [11, 13, 39, 40, 41]
-DISTANCE = 1.5
+DISTANCE = 2.0  # Updated distance
 
-NUM_POINTS_BETWEEN_KEYPOINTS = 4  # definisci quanti segmenti di strada vuoi tra ciascuna coppia di keypoint
+# Function to calculate the distance between two points
+def calculate_distance(p1, p2):
+    return math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
 
-def interpolate_points(p1, p2, num_points):
-    """Interpolates points between two given points."""
-    x_values = np.linspace(p1[0], p2[0], num_points + 2)[1:-1]  # +2 e [1:-1] per escludere p1 e p2
-    y_values = np.linspace(p1[1], p2[1], num_points + 2)[1:-1]
-    return list(zip(x_values, y_values))
-
+# Function to read an SDF file
 def read_file_sdf(filename):
-    """Reads and returns the content of an SDF file."""
     with open(filename, 'r') as file:
         return file.read()
 
-MODEL_CONTENT_CONE_LEFT = read_file_sdf(filename = './steer_bot/cone_yellow/model.sdf')
-MODEL_CONTENT_CONE_RIGHT = read_file_sdf(filename = './steer_bot/cone_blue/model.sdf')
-MODEL_CONTENT_ROAD = read_file_sdf(filename = './steer_bot/road.sdf')  # Assuming you have an sdf named road_.sdf
-MODEL_CONTENT_TREE = read_file_sdf(filename = './steer_bot/tree.sdf')
+# Read the model content
+MODEL_CONTENT_CONE_LEFT = read_file_sdf('./steer_bot/cone_yellow/model.sdf')
+MODEL_CONTENT_CONE_RIGHT = read_file_sdf('./steer_bot/cone_blue/model.sdf')
+MODEL_CONTENT_ROAD = read_file_sdf('./steer_bot/road.sdf')
+MODEL_CONTENT_TREE = read_file_sdf('./steer_bot/tree.sdf')
 
+# Generate the primary trajectory
 def generate_trajectory():
-    """Generates the primary trajectory using sin curve."""
     cx = np.arange(0, 50, 1)
     cy = [math.sin(ix / 5.0) * ix / 2.0 for ix in cx]
     tck = interpolate.splrep(cx, cy)
     return cx, cy, tck
 
-def generate_track(cx, cy, tck):
-    """Generates left and right points based on the primary trajectory."""
-    points_list_left = []
-    points_list_right = []
+# Function to spawn a model
+def spawn(name, x, y, z, model_content):
+    spawn_model = rospy.ServiceProxy('steer_bot/gazebo/spawn_sdf_model', SpawnModel)
+    initial_pose = Pose()
+    initial_pose.position.x = x
+    initial_pose.position.y = y
+    initial_pose.position.z = z
+    response = spawn_model(name, model_content, "", initial_pose, "world")
+    rospy.loginfo(response.status_message)
 
+# Main function
+def node():
+    rospy.init_node('spawn_model')
+    rospy.wait_for_service('steer_bot/gazebo/spawn_sdf_model')
+
+    cx, cy, tck = generate_trajectory()
+
+    # Generate points for cones
+    left_points = []
+    right_points = []
     for i in range(len(cx)):
         x0, y0 = cx[i], cy[i]
         dydx = interpolate.splev(x0, tck, der=1)
         angle = np.arctan(abs(dydx))
-        
+
         if dydx >= 0:
             x1, y1 = x0 - DISTANCE * np.sin(angle), y0 + DISTANCE * np.cos(angle)
             x2, y2 = x0 + DISTANCE * np.sin(angle), y0 - DISTANCE * np.cos(angle)
@@ -55,63 +67,45 @@ def generate_track(cx, cy, tck):
             x1, y1 = x0 + DISTANCE * np.sin(angle), y0 + DISTANCE * np.cos(angle)
             x2, y2 = x0 - DISTANCE * np.sin(angle), y0 - DISTANCE * np.cos(angle)
 
-        points_list_left.append((x1, y1))
-        points_list_right.append((x2, y2))
-    
-    return points_list_left, points_list_right
+        left_points.append((x1, y1))
+        right_points.append((x2, y2))
 
-def compute_middle_points(left_points, right_points):
-    """Compute middle points between left and right points."""
-    return [((l[0] + r[0]) / 2, (l[1] + r[1]) / 2) for l, r in zip(left_points, right_points)]
-
-def spawn(name, x, y, z, model_content):
-    """Spawns a model in the simulation environment."""
-    spawn_model = rospy.ServiceProxy('steer_bot/gazebo/spawn_sdf_model', SpawnModel)
-    
-    initial_pose = Pose()
-    initial_pose.position.x = x 
-    initial_pose.position.y = y
-    initial_pose.position.z = z 
-
-    response = spawn_model(name, model_content, "", initial_pose, "world")
-    rospy.loginfo(response.status_message)
-
-def node():
-    """ROS node to generate trajectories and spawn models."""
-    rospy.init_node('spawn_model')
-    rospy.wait_for_service('steer_bot/gazebo/spawn_sdf_model')
-
-    cx, cy, tck = generate_trajectory()
-    left_points, right_points = generate_track(cx, cy, tck)
-    
     try:
-        
+        # Generate road
+        for i in range(len(cx) - 1):
+            start_point = (cx[i], cy[i])
+            end_point = (cx[i + 1], cy[i + 1])
+            dist = calculate_distance(start_point, end_point)
 
-        # Qui generiamo segmenti di strada aggiuntivi tra ogni coppia di keypoint
-        for i in range(len(left_points) - 1):  # -1 poiché guardiamo al punto successivo
-            start_point = ((left_points[i][0] + right_points[i][0]) / 2, (left_points[i][1] + right_points[i][1]) / 2)
-            end_point = ((left_points[i + 1][0] + right_points[i + 1][0]) / 2, (left_points[i + 1][1] + right_points[i + 1][1]) / 2)
+            num_segments = int(math.ceil(dist / 0.6))
+            segment_length = dist / num_segments
 
-            middle_points = interpolate_points(start_point, end_point, NUM_POINTS_BETWEEN_KEYPOINTS)
-            for j, (x, y) in enumerate(middle_points):
-                spawn(f'roadSegment_{i}_{j}', x, y, 0, MODEL_CONTENT_ROAD)
-        # Qui generiamo i coni che delimitano il percorso 
+            x_diff = end_point[0] - start_point[0]
+            y_diff = end_point[1] - start_point[1]
+
+            for j in range(num_segments):
+                x = start_point[0] + (j * x_diff / num_segments)
+                y = start_point[1] + (j * y_diff / num_segments)
+                modified_road_sdf = MODEL_CONTENT_ROAD.replace('<size>3 4 .1</size>', f'<size>3 {segment_length} .1</size>')
+                spawn(f'roadSegment_{i}_{j}', x, y, 0, modified_road_sdf)
+
+        # Generate cones
         for i, (x, y) in enumerate(left_points):
             if i not in SKIP_LEFT_POINTS:
-                print('cono sinistra')
-                spawn(f'pointL_{i}_x', x, y, 0.3, MODEL_CONTENT_CONE_LEFT)
+                spawn(f'pointL_{i}', x, y, 0.3, MODEL_CONTENT_CONE_LEFT)
 
         for i, (x, y) in enumerate(right_points):
             if i not in SKIP_RIGHT_POINTS:
-                print('cono destra')
-                spawn(f'pointR_{i}_x', x, y, 0.3, MODEL_CONTENT_CONE_RIGHT)
-        # Qui generiamo gli alberi per decorazione
-        i=0
-        for tree in LIST_TREE:
-            i += 1
-            x, y = tree
-            spawn("tree"+ str(i), x, y, 0, MODEL_CONTENT_TREE)
-        
+                spawn(f'pointR_{i}', x, y, 0.3, MODEL_CONTENT_CONE_RIGHT)
+
+        # Generate trees
+        for i in range(40):
+            x = random.uniform(min(cx), max(cx))
+            y = random.uniform(min(cy), max(cy))
+
+            # Make sure trees are at least 3 units away from cones defining road edges
+            if all(calculate_distance((x, y), point) > 3 for point in left_points + right_points):
+                spawn(f'tree_{i}', x, y, 0, MODEL_CONTENT_TREE)
 
     except rospy.ServiceException as exc:
         rospy.logerr("Error during service invocation: %s", str(exc))
